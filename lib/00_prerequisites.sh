@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Final
 phase_00_prerequisites(){
   log "00 – Systemvoraussetzungen prüfen"
   need_root
