@@ -1,0 +1,155 @@
+name: nextcloud-enterprise
+x-logging: &logging
+  driver: json-file
+  options: {max-size: "10m", max-file: "5"}
+x-common: &common
+  restart: unless-stopped
+  security_opt: ["no-new-privileges:true"]
+  logging: *logging
+services:
+  postgres:
+    <<: *common
+    image: ${POSTGRES_IMAGE}
+    container_name: nc-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: ${TZ}
+    volumes:
+      - /ssd_data/nextcloud-enterprise/postgres:/var/lib/postgresql/data
+      - ./postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+    networks:
+      database: {aliases: [postgres]}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+  redis:
+    <<: *common
+    image: ${REDIS_IMAGE}
+    container_name: nc-redis
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes:
+      - /ssd_data/nextcloud-enterprise/redis:/data
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    networks:
+      database: {aliases: [redis]}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a '${REDIS_PASSWORD}' ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+  nextcloud:
+    <<: *common
+    image: ${NEXTCLOUD_IMAGE}
+    container_name: nextcloud
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    environment:
+      TZ: ${TZ}
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      REDIS_HOST: redis
+      REDIS_HOST_PASSWORD: ${REDIS_PASSWORD}
+      PHP_MEMORY_LIMIT: ${PHP_MEMORY_LIMIT}
+      PHP_UPLOAD_LIMIT: ${UPLOAD_LIMIT}
+      APACHE_BODY_LIMIT: "0"
+    volumes:
+      - /ssd_data/nextcloud-enterprise/nextcloud:/var/www/html
+      - /hdd_data/nextcloud-data:/var/www/html/data
+      - ./php/nextcloud.ini:/usr/local/etc/php/conf.d/zz-nextcloud.ini:ro
+    networks:
+      frontend: {aliases: [nextcloud]}
+      database: {}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1/status.php | grep -Eq '\"installed\"[[:space:]]*:[[:space:]]*true'"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+  nextcloud-cron:
+    <<: *common
+    image: ${NEXTCLOUD_IMAGE}
+    container_name: nextcloud-cron
+    entrypoint: /cron.sh
+    depends_on:
+      nextcloud: {condition: service_healthy}
+    environment: {TZ: "${TZ}"}
+    volumes:
+      - /ssd_data/nextcloud-enterprise/nextcloud:/var/www/html
+      - /hdd_data/nextcloud-data:/var/www/html/data
+    networks:
+      database: {}
+      frontend: {}
+  onlyoffice:
+    <<: *common
+    image: ${ONLYOFFICE_IMAGE}
+    container_name: onlyoffice
+    environment:
+      TZ: ${TZ}
+      JWT_ENABLED: "true"
+      JWT_SECRET: ${ONLYOFFICE_JWT_SECRET}
+      JWT_HEADER: AuthorizationJwt
+      JWT_IN_BODY: "true"
+      ALLOW_PRIVATE_IP_ADDRESS: "true"
+      EXAMPLE_ENABLED: "false"
+      ADMINPANEL_ENABLED: "false"
+    volumes:
+      - /ssd_data/nextcloud-enterprise/onlyoffice/data:/var/www/onlyoffice/Data
+      - /ssd_data/nextcloud-enterprise/onlyoffice/lib:/var/lib/onlyoffice
+      - /hdd_data/onlyoffice-logs:/var/log/onlyoffice
+    networks:
+      frontend: {aliases: [onlyoffice]}
+    shm_size: 2gb
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1/healthcheck | grep -qi true"]
+      interval: 15s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+  nginx:
+    <<: *common
+    image: ${NGINX_IMAGE}
+    container_name: nc-nginx
+    depends_on:
+      nextcloud: {condition: service_healthy}
+      onlyoffice: {condition: service_healthy}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/snippets:/etc/nginx/snippets:ro
+      - ./certs:/etc/nginx/certs:ro
+    networks:
+      frontend: {aliases: [nginx]}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/nginx-health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+  portainer:
+    <<: *common
+    image: ${PORTAINER_IMAGE}
+    container_name: portainer
+    ports: ["${PORTAINER_BIND_IP}:${PORTAINER_PORT}:9443"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /ssd_data/nextcloud-enterprise/portainer:/data
+    networks:
+      management: {}
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-check-certificate -q --spider https://127.0.0.1:9443/api/status"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+networks:
+  frontend: {name: nc_frontend}
+  database: {name: nc_database, internal: true}
+  management: {name: nc_management}
