@@ -18,9 +18,9 @@ server {
 
     # ONLYOFFICE wird von Nextcloud in einem domainübergreifenden iframe geladen.
     # Ein X-Frame-Options-SAMEORIGIN-Header würde den Editor blockieren.
+    include /etc/nginx/snippets/security-headers.conf;
     add_header X-Content-Type-Options nosniff always;
     add_header Referrer-Policy no-referrer always;
-    add_header Strict-Transport-Security "max-age=15552000; includeSubDomains" always;
     add_header Content-Security-Policy "frame-ancestors 'self' https://__NEXTCLOUD_DOMAIN__" always;
 
     client_max_body_size __UPLOAD_LIMIT__;

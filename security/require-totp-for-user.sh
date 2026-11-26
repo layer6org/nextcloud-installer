@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-source "$PROJECT_DIR/scripts/lib.sh"
-require_root
-cd "$PROJECT_DIR"
+PROJECT_DIR=${PROJECT_DIR:-/opt/nextcloud-enterprise}; export PROJECT_DIR
+# shellcheck source=../lib/common.sh
+source "$(dirname "$0")/../lib/common.sh"
+load_env
 USER_ID="${1:?Aufruf: $0 BENUTZERNAME}"
 TOTP_GROUP="${TOTP_GROUP:-totp-required}"
 PASSKEY_ADMIN_GROUP="${PASSKEY_ADMIN_GROUP:-passkey-admins}"

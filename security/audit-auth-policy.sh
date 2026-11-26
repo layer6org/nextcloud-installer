@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-source "$PROJECT_DIR/scripts/lib.sh"
-require_root
-cd "$PROJECT_DIR"
-ADMIN_USER="${1:-admin}"
+PROJECT_DIR=${PROJECT_DIR:-/opt/nextcloud-enterprise}; export PROJECT_DIR
+# shellcheck source=../lib/common.sh
+source "$(dirname "$0")/../lib/common.sh"
+load_env
+ADMIN_USER="${1:-${NEXTCLOUD_ADMIN_USER:-admin}}"
 echo "=== Apps ==="
 occ app:list | grep -E 'twofactor|Enabled:|Disabled:' || true
 echo "=== Systemkonfiguration ==="

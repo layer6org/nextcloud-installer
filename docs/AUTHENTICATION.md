@@ -20,24 +20,32 @@ Nextcloud Core kann 2FA für Gruppen erzwingen, aber nicht nativ pro Benutzer de
 
 ## Installation
 
-Der Installer richtet die Apps, Gruppen und Grundkonfiguration ein. Die Passkey-Registrierung selbst erfordert eine interaktive Browser-Sitzung und kann nicht sicher automatisiert werden.
+Die Richtlinie wird **nicht** automatisch vom Installer angewendet, weil sie das Verhalten für alle Benutzer ändert (u. a. kein „Passwort vergessen“-Link, App-Passwörter für alle Clients). Anwenden mit:
+
+```bash
+/opt/nextcloud-enterprise-tools/security/apply-auth-policy.sh [ADMINBENUTZER]
+```
+
+Die Passkey-Registrierung selbst erfordert eine interaktive Browser-Sitzung und kann nicht sicher automatisiert werden.
+
+Prüfen: `/opt/nextcloud-enterprise-tools/security/audit-auth-policy.sh`
 
 ## Benutzer aufnehmen
 
 ```bash
-/opt/nextcloud-enterprise/security/require-totp-for-user.sh BENUTZERNAME
+/opt/nextcloud-enterprise-tools/security/require-totp-for-user.sh BENUTZERNAME
 ```
 
 ## Admin nach Passkey-Test versiegeln
 
 ```bash
-/opt/nextcloud-enterprise/security/seal-admin-password.sh ADMINBENUTZER
+/opt/nextcloud-enterprise-tools/security/seal-admin-password.sh ADMINBENUTZER
 ```
 
 ## Notfallzugang
 
 ```bash
-/opt/nextcloud-enterprise/security/emergency-unlock-admin.sh ADMINBENUTZER
+/opt/nextcloud-enterprise-tools/security/emergency-unlock-admin.sh ADMINBENUTZER
 ```
 
 Danach die Richtlinie erneut anwenden und Passkeys kontrollieren.

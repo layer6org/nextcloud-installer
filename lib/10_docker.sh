@@ -5,9 +5,16 @@ phase_10_docker(){
     systemctl enable --now docker
     return
   fi
+  # Nur bei frisch installiertem Docker eine eigene daemon.json setzen,
+  # damit bestehende Host-Konfigurationen nicht überschrieben werden.
+  if [[ ! -e /etc/docker/daemon.json ]]; then
+    install -d -m 0755 /etc/docker
+    install -m 0644 "$SOURCE_DIR/config/docker-daemon.json" /etc/docker/daemon.json
+  fi
   install -m 0755 -d /etc/apt/keyrings
   curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
   chmod a+r /etc/apt/keyrings/docker.asc
+  # shellcheck disable=SC1091
   . /etc/os-release
   echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $VERSION_CODENAME stable" > /etc/apt/sources.list.d/docker.list
   rm -f /etc/apt/sources.list.d/docker.sources
