@@ -6,6 +6,8 @@ TOOLS_DIR="/opt/nextcloud-enterprise-tools"
 KEEP_TOOLS=1
 PURGE_DOCKER=0
 KEEP_DATA=0
+PURGE_BACKUPS=0
+BACKUP_ROOT_DEFAULT="/hdd_data/nextcloud-backups"
 ASSUME_YES=0
 MODE_SELECTED=0
 
@@ -13,9 +15,11 @@ usage() {
   cat <<'USAGE'
 Verwendung:
   uninstall.sh                         Interaktives Menü
-  uninstall.sh --keep-data             Stack entfernen, Nutzdaten behalten
+  uninstall.sh --keep-data             Stack entfernen, Nutzdaten, .env und Zertifikate behalten
+  uninstall.sh --delete-data           Stack und Projektdaten löschen, Docker behalten
   uninstall.sh --purge-docker          Stack, Daten und Docker vollständig entfernen
   uninstall.sh --factory-reset         Zusätzlich persistente Werkzeuge entfernen
+  uninstall.sh --purge-backups         Zusätzlich alle Backups löschen (sonst bleiben sie erhalten)
   uninstall.sh --yes [OPTION]          Sicherheitsabfrage überspringen
 
 Ohne Option wird interaktiv abgefragt, was entfernt werden soll.
@@ -28,9 +32,16 @@ for arg in "$@"; do
       KEEP_DATA=1
       MODE_SELECTED=1
       ;;
+    --delete-data)
+      KEEP_DATA=0
+      MODE_SELECTED=1
+      ;;
     --purge-docker)
       PURGE_DOCKER=1
       MODE_SELECTED=1
+      ;;
+    --purge-backups)
+      PURGE_BACKUPS=1
       ;;
     --factory-reset)
       PURGE_DOCKER=1
@@ -53,6 +64,13 @@ for arg in "$@"; do
 done
 
 [[ $EUID -eq 0 ]] || { echo "FEHLER: root erforderlich" >&2; exit 1; }
+
+exec 9>/run/nextcloud-enterprise.lock
+flock -n 9 || { echo "FEHLER: Ein anderer Nextcloud-Enterprise-Vorgang läuft bereits." >&2; exit 1; }
+
+# Backup-Ziel aus .env lesen, ohne die Datei zu sourcen.
+BACKUP_ROOT=$(sed -nE "s/^BACKUP_ROOT='?([^']*)'?$/\1/p" "$PROJECT_DIR/.env" 2>/dev/null | tail -n1)
+BACKUP_ROOT=${BACKUP_ROOT:-$BACKUP_ROOT_DEFAULT}
 
 interactive_menu() {
   [[ -t 0 ]] || {
@@ -80,6 +98,12 @@ interactive_menu() {
     0) echo "Deinstallation abgebrochen."; exit 0 ;;
     *) echo "Ungültige Auswahl." >&2; exit 2 ;;
   esac
+
+  if (( ! KEEP_DATA )) && [[ -d $BACKUP_ROOT ]]; then
+    local purge
+    read -r -p "Auch alle Backups unter $BACKUP_ROOT löschen? [j/N]: " purge
+    if [[ $purge == [jJ] ]]; then PURGE_BACKUPS=1; fi
+  fi
 }
 
 if (( ! MODE_SELECTED )); then
@@ -95,14 +119,16 @@ confirm_removal() {
 
   echo
   echo "Folgende Aktion wird ausgeführt:"
-  echo "  Projektdaten:      $([[ $KEEP_DATA -eq 1 ]] && echo 'BEHALTEN' || echo 'LÖSCHEN')"
+  echo "  Projektdaten:      $([[ $KEEP_DATA -eq 1 ]] && echo 'BEHALTEN (inkl. .env und Zertifikaten)' || echo 'LÖSCHEN')"
+  echo "  Backups:           $([[ $PURGE_BACKUPS -eq 1 ]] && echo "LÖSCHEN ($BACKUP_ROOT)" || echo 'BEHALTEN')"
   echo "  Docker Engine:     $([[ $PURGE_DOCKER -eq 1 ]] && echo 'LÖSCHEN' || echo 'BEHALTEN')"
   echo "  Werkzeugverzeichnis: $([[ $KEEP_TOOLS -eq 1 ]] && echo 'BEHALTEN' || echo 'LÖSCHEN')"
   echo
 
-  local confirmation
-  read -r -p "Zum Fortfahren exakt ALLES-LOESCHEN eingeben: " confirmation
-  [[ "$confirmation" == "ALLES-LOESCHEN" ]] || {
+  local confirmation expected=ALLES-LOESCHEN
+  (( KEEP_DATA && ! PURGE_DOCKER && ! PURGE_BACKUPS )) && expected=STACK-ENTFERNEN
+  read -r -p "Zum Fortfahren exakt $expected eingeben: " confirmation
+  [[ "$confirmation" == "$expected" ]] || {
     echo "Deinstallation abgebrochen."
     exit 0
   }
@@ -139,9 +165,12 @@ confirm_removal
 
 echo "Container und Netzwerke werden entfernt ..."
 if [[ -f "$PROJECT_DIR/compose.yml" && -f "$PROJECT_DIR/.env" ]] && command -v docker >/dev/null 2>&1; then
+  env_files=()
+  [[ -f "$PROJECT_DIR/versions.env" ]] && env_files+=(--env-file "$PROJECT_DIR/versions.env")
+  env_files+=(--env-file "$PROJECT_DIR/.env")
   docker compose \
     --project-directory "$PROJECT_DIR" \
-    --env-file "$PROJECT_DIR/.env" \
+    "${env_files[@]}" \
     -f "$PROJECT_DIR/compose.yml" \
     down --remove-orphans -v || true
 fi
@@ -159,26 +188,42 @@ if (( ! KEEP_DATA )); then
     /ssd_data/nextcloud-enterprise \
     /hdd_data/nextcloud-data \
     /hdd_data/onlyoffice-logs
+  rm -rf "$PROJECT_DIR"
 else
-  echo "Projekt- und Nutzdaten bleiben erhalten."
+  # .env (Secrets) und certs/ (Origin-Zertifikat) werden für eine spätere
+  # Neuinstallation mit denselben Daten benötigt und bleiben erhalten.
+  echo "Projekt- und Nutzdaten, .env und Zertifikate bleiben erhalten."
+  if [[ -d $PROJECT_DIR ]]; then
+    find "$PROJECT_DIR" -mindepth 1 -maxdepth 1 ! -name .env ! -name certs -exec rm -rf {} +
+  fi
 fi
 
-rm -rf "$PROJECT_DIR"
+if (( PURGE_BACKUPS )); then
+  echo "Backups werden entfernt: $BACKUP_ROOT"
+  if [[ $BACKUP_ROOT == /*/* ]]; then rm -rf --one-file-system "$BACKUP_ROOT"; fi
+fi
+
+systemctl disable --now nextcloud-backup.timer 2>/dev/null || true
+rm -f /etc/systemd/system/nextcloud-backup.service /etc/systemd/system/nextcloud-backup.timer
+systemctl daemon-reload 2>/dev/null || true
 
 if (( PURGE_DOCKER )); then
   echo "Docker und Containerd werden vollständig entfernt ..."
   systemctl disable --now docker.service docker.socket containerd.service 2>/dev/null || true
 
-  DEBIAN_FRONTEND=noninteractive apt-get purge -y \
-    docker-ce \
-    docker-ce-cli \
-    containerd.io \
-    docker-buildx-plugin \
-    docker-compose-plugin \
-    docker-ce-rootless-extras \
-    docker.io \
-    containerd \
-    runc 2>/dev/null || true
+  # Nur tatsächlich installierte Pakete übergeben – ein unbekanntes Paket
+  # würde sonst den gesamten Purge abbrechen.
+  installed_pkgs=()
+  for pkg in docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin \
+             docker-ce-rootless-extras docker.io containerd runc; do
+    if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'install ok installed\|deinstall ok config-files'; then
+      installed_pkgs+=("$pkg")
+    fi
+  done
+  if (( ${#installed_pkgs[@]} )); then
+    DEBIAN_FRONTEND=noninteractive apt-get purge -y "${installed_pkgs[@]}" \
+      || echo "WARNUNG: apt-get purge meldete Fehler für: ${installed_pkgs[*]}" >&2
+  fi
 
   DEBIAN_FRONTEND=noninteractive apt-get autoremove -y 2>/dev/null || true
 
@@ -208,5 +253,6 @@ fi
 echo
 echo "Deinstallation abgeschlossen."
 echo "Persistente Werkzeuge: $([[ -d "$TOOLS_DIR" ]] && echo erhalten || echo entfernt)"
-echo "Projektdaten: $([[ $KEEP_DATA -eq 1 ]] && echo erhalten || echo entfernt)"
+echo "Projektdaten: $([[ $KEEP_DATA -eq 1 ]] && echo "erhalten (.env und Zertifikate in $PROJECT_DIR)" || echo entfernt)"
+echo "Backups: $([[ -d $BACKUP_ROOT ]] && echo "erhalten ($BACKUP_ROOT)" || echo entfernt)"
 echo "Docker: $([[ $PURGE_DOCKER -eq 1 ]] && echo entfernt || echo erhalten)"

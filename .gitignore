@@ -1,0 +1,9 @@
+# Laufzeitgeheimnisse und generierte Dateien niemals einchecken
+.env
+.env.*
+certs/
+nginx/conf.d/nextcloud.conf
+nginx/conf.d/onlyoffice.conf
+nginx/snippets/cloudflare-realip.conf
+*.log
+.DS_Store

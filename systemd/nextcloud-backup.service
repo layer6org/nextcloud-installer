@@ -5,8 +5,7 @@ After=docker.service
 
 [Service]
 Type=oneshot
-WorkingDirectory=__PROJECT_DIR__
-ExecStart=__PROJECT_DIR__/scripts/backup.sh
+ExecStart=__TOOLS_DIR__/backup.sh
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7

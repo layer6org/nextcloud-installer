@@ -1,55 +1,67 @@
 #!/usr/bin/env bash
-phase_20_network(){
-  log "20 – Laufzeitprojekt, Konfiguration und Netzwerke vorbereiten"
-  install -d -m 0750 "$PROJECT_DIR"
-  rsync -a --delete \
-    --exclude='.env' \
-    --exclude='certs/origin.crt' \
-    --exclude='certs/origin.key' \
-    --exclude='lib/' \
-    "$SOURCE_DIR/" "$PROJECT_DIR/"
-
-  if [[ ! -f "$PROJECT_DIR/.env" ]]; then
-    prompt_default NEXTCLOUD_DOMAIN "Nextcloud-Domain" "cloud.example.com"
-    prompt_default ONLYOFFICE_DOMAIN "ONLYOFFICE-Domain" "office.example.com"
-    prompt_default PORTAINER_BIND_IP "Portainer-Bind-IP" "127.0.0.1"
-    prompt_default NEXTCLOUD_ADMIN_USER "Nextcloud-Administrator" "admin"
+create_env_file(){
+  local f="$PROJECT_DIR/.env" tmp
+  prompt_default NEXTCLOUD_DOMAIN "Nextcloud-Domain" "cloud.example.com" valid_domain
+  prompt_default ONLYOFFICE_DOMAIN "ONLYOFFICE-Domain" "office.example.com" valid_domain
+  [[ $NEXTCLOUD_DOMAIN != "$ONLYOFFICE_DOMAIN" ]] || die "Nextcloud- und ONLYOFFICE-Domain müssen sich unterscheiden."
+  prompt_default NGINX_BIND_IP "Bind-IP für NGINX (80/443); 127.0.0.1, wenn cloudflared auf diesem Host läuft" "0.0.0.0" valid_ipv4
+  prompt_default REALIP_TRUSTED_CIDRS "Adresse(n)/Netz(e) von cloudflared, durch Leerzeichen getrennt" "172.16.0.0/12" valid_cidr_list
+  prompt_default PORTAINER_BIND_IP "Portainer-Bind-IP (LAN-IP für Zugriff aus dem Admin-Netz)" "127.0.0.1" valid_ipv4
+  prompt_default NEXTCLOUD_ADMIN_USER "Nextcloud-Administrator" "admin" valid_username
+  if ! nc_installed_on_disk; then
     prompt_secret NEXTCLOUD_ADMIN_PASSWORD "Nextcloud-Administratorpasswort"
-    POSTGRES_PASSWORD=$(random_secret)
-    REDIS_PASSWORD=$(random_secret)
-    ONLYOFFICE_JWT_SECRET=$(random_secret)
-    cat > "$PROJECT_DIR/.env" <<ENV
-TZ=Europe/Berlin
-NEXTCLOUD_DOMAIN=$NEXTCLOUD_DOMAIN
-ONLYOFFICE_DOMAIN=$ONLYOFFICE_DOMAIN
-PORTAINER_BIND_IP=$PORTAINER_BIND_IP
-PORTAINER_PORT=9443
-NEXTCLOUD_ADMIN_USER=$NEXTCLOUD_ADMIN_USER
-NEXTCLOUD_ADMIN_PASSWORD=$NEXTCLOUD_ADMIN_PASSWORD
-POSTGRES_DB=nextcloud
-POSTGRES_USER=nextcloud
-POSTGRES_PASSWORD=$POSTGRES_PASSWORD
-REDIS_PASSWORD=$REDIS_PASSWORD
-ONLYOFFICE_JWT_SECRET=$ONLYOFFICE_JWT_SECRET
-TRUSTED_PROXIES=172.16.0.0/12
-OVERWRITE_PROTOCOL=https
-UPLOAD_LIMIT=10G
-PHP_MEMORY_LIMIT=1024M
-ENV
-    cat "$PROJECT_DIR/versions.env" >> "$PROJECT_DIR/.env"
-    chmod 0600 "$PROJECT_DIR/.env"
   fi
 
-  load_env
-  install -d -m 0750 \
-    /ssd_data/nextcloud-enterprise/{postgres,redis,nextcloud,portainer,onlyoffice/data,onlyoffice/lib} \
-    /hdd_data/{nextcloud-data,onlyoffice-logs,nextcloud-backups} \
-    "$PROJECT_DIR/certs"
+  tmp=$(mktemp "$f.XXXXXX"); chmod 0600 "$tmp"
+  {
+    printf 'TZ=%s\n' "$(env_quote Europe/Berlin)"
+    printf 'NEXTCLOUD_DOMAIN=%s\n' "$(env_quote "$NEXTCLOUD_DOMAIN")"
+    printf 'ONLYOFFICE_DOMAIN=%s\n' "$(env_quote "$ONLYOFFICE_DOMAIN")"
+    printf 'NGINX_BIND_IP=%s\n' "$(env_quote "$NGINX_BIND_IP")"
+    printf 'REALIP_TRUSTED_CIDRS=%s\n' "$(env_quote "$REALIP_TRUSTED_CIDRS")"
+    printf 'PORTAINER_BIND_IP=%s\n' "$(env_quote "$PORTAINER_BIND_IP")"
+    printf 'PORTAINER_PORT=%s\n' "$(env_quote 9443)"
+    printf 'NEXTCLOUD_ADMIN_USER=%s\n' "$(env_quote "$NEXTCLOUD_ADMIN_USER")"
+    printf 'POSTGRES_DB=%s\n' "$(env_quote nextcloud)"
+    printf 'POSTGRES_USER=%s\n' "$(env_quote nextcloud)"
+    printf 'POSTGRES_PASSWORD=%s\n' "$(env_quote "$(random_secret)")"
+    printf 'REDIS_PASSWORD=%s\n' "$(env_quote "$(random_secret)")"
+    printf 'ONLYOFFICE_JWT_SECRET=%s\n' "$(env_quote "$(random_secret)")"
+    printf 'TRUSTED_PROXIES=%s\n' "$(env_quote 172.16.0.0/12)"
+    printf 'DEFAULT_PHONE_REGION=%s\n' "$(env_quote DE)"
+    printf 'UPLOAD_LIMIT=%s\n' "$(env_quote 10G)"
+    printf 'PHP_MEMORY_LIMIT=%s\n' "$(env_quote 1024M)"
+    printf 'BACKUP_ROOT=%s\n' "$(env_quote /hdd_data/nextcloud-backups)"
+    printf 'BACKUP_RETENTION_DAYS=%s\n' "$(env_quote 14)"
+  } > "$tmp"
+  mv -f "$tmp" "$f"
+}
 
-  sed -e "s/__NEXTCLOUD_DOMAIN__/$NEXTCLOUD_DOMAIN/g" -e "s/__UPLOAD_LIMIT__/$UPLOAD_LIMIT/g" \
-    "$PROJECT_DIR/nginx/conf.d/nextcloud.conf.template" > "$PROJECT_DIR/nginx/conf.d/nextcloud.conf"
-  sed -e "s/__NEXTCLOUD_DOMAIN__/$NEXTCLOUD_DOMAIN/g" -e "s/__ONLYOFFICE_DOMAIN__/$ONLYOFFICE_DOMAIN/g" -e "s/__UPLOAD_LIMIT__/$UPLOAD_LIMIT/g" \
-    "$PROJECT_DIR/nginx/conf.d/onlyoffice.conf.template" > "$PROJECT_DIR/nginx/conf.d/onlyoffice.conf"
+phase_20_network(){
+  log "20 – Laufzeitprojekt, Konfiguration und Netzwerke vorbereiten"
+
+  # Bestehende Installation: vor dem Austausch von Images und Konfiguration sichern.
+  if nc_installed_on_disk && [[ -f "$PROJECT_DIR/.env" ]] && container_running nextcloud; then
+    log "Bestehende Installation erkannt – Sicherung vor der Aktualisierung"
+    PROJECT_DIR=$PROJECT_DIR "$SOURCE_DIR/backup.sh"
+  fi
+
+  sync_runtime_files
+  [[ -f "$PROJECT_DIR/.env" ]] || create_env_file
+  load_env
+
+  valid_domain "$NEXTCLOUD_DOMAIN" || die "NEXTCLOUD_DOMAIN in .env ist ungültig."
+  valid_domain "$ONLYOFFICE_DOMAIN" || die "ONLYOFFICE_DOMAIN in .env ist ungültig."
+  valid_cidr_list "$REALIP_TRUSTED_CIDRS" || die "REALIP_TRUSTED_CIDRS in .env ist ungültig."
+  valid_size "$UPLOAD_LIMIT" || die "UPLOAD_LIMIT in .env muss z. B. 10G lauten."
+  check_nextcloud_upgrade_path
+
+  install -d -m 0750 \
+    "$SSD_ROOT"/{postgres,redis,nextcloud,portainer,onlyoffice/data,onlyoffice/lib} \
+    "$NC_DATA_DIR" /hdd_data/onlyoffice-logs "$PROJECT_DIR/certs"
+  install -d -m 0700 "$BACKUP_ROOT"
+
+  render_nginx_configs
 
   if [[ ! -s "$PROJECT_DIR/certs/origin.crt" || ! -s "$PROJECT_DIR/certs/origin.key" ]]; then
     openssl req -x509 -nodes -newkey rsa:3072 -days 825 \

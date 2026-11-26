@@ -1,0 +1,6 @@
+# Wird von render_nginx_configs aus REALIP_TRUSTED_CIDRS (.env) erzeugt.
+# Nur die Adresse(n) eintragen, von denen cloudflared verbindet. Jede hier
+# vertrauenswürdige Quelle kann die Client-IP per CF-Connecting-IP festlegen.
+__SET_REAL_IP_FROM__
+real_ip_header CF-Connecting-IP;
+real_ip_recursive on;

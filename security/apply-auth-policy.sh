@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-source "$PROJECT_DIR/scripts/lib.sh"
-require_root
-cd "$PROJECT_DIR"
-[[ -f .env ]] || { echo "Fehlt: $PROJECT_DIR/.env"; exit 1; }
-set -a; source .env; set +a
+PROJECT_DIR=${PROJECT_DIR:-/opt/nextcloud-enterprise}; export PROJECT_DIR
+# shellcheck source=../lib/common.sh
+source "$(dirname "$0")/../lib/common.sh"
+load_env
 ADMIN_USER="${1:-${NEXTCLOUD_ADMIN_USER:-admin}}"
 TOTP_GROUP="${TOTP_GROUP:-totp-required}"
 PASSKEY_ADMIN_GROUP="${PASSKEY_ADMIN_GROUP:-passkey-admins}"
@@ -40,8 +38,8 @@ Melde dich als '$ADMIN_USER' an, registriere mindestens ZWEI Passkeys und teste 
 in einem privaten Browserfenster über „Mit einem Gerät anmelden“.
 
 Erst nach erfolgreichem Test ausführen:
-  $PROJECT_DIR/security/seal-admin-password.sh "$ADMIN_USER"
+  $TOOLS_DIR/security/seal-admin-password.sh "$ADMIN_USER"
 MSG
 
 echo "[7/7] Normale Benutzer der Gruppe '$TOTP_GROUP' hinzufügen"
-echo "Beispiel: $PROJECT_DIR/security/require-totp-for-user.sh BENUTZERNAME"
+echo "Beispiel: $TOOLS_DIR/security/require-totp-for-user.sh BENUTZERNAME"

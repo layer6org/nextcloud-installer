@@ -40,14 +40,16 @@ Cloudflare Tunnel:
 ## Prüfung
 
 ```bash
-cd /opt/nextcloud-enterprise
-./scripts/repair-onlyoffice.sh
+/opt/nextcloud-enterprise-tools/repair.sh
+/opt/nextcloud-enterprise-tools/doctor.sh
 ```
 
 Zusätzliche Einzeltests:
 
 ```bash
-docker compose exec -T nextcloud curl -fsS http://onlyoffice/healthcheck
-docker compose exec -T onlyoffice curl -fsS http://nextcloud/status.php
-docker compose exec -T -u www-data nextcloud php occ onlyoffice:documentserver --check
+cd /opt/nextcloud-enterprise
+dc() { docker compose --env-file versions.env --env-file .env "$@"; }
+dc exec -T nextcloud curl -fsS http://onlyoffice/healthcheck
+dc exec -T onlyoffice curl -fsS http://nextcloud/status.php
+dc exec -T -u www-data nextcloud php occ onlyoffice:documentserver --check
 ```
